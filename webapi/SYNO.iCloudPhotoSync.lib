@@ -1,0 +1,19 @@
+{
+    "SYNO.iCloudPhotoSync": {
+        "path": "iCloudPhotoSync.cgi",
+        "minVersion": 1,
+        "maxVersion": 1,
+        "requestFormat": "JSON",
+        "methods": {
+            "1": {
+                "status": { "allowUser": ["admin.local", "admin.ldap", "admin.domain"], "grantByDefault": true },
+                "auth": { "allowUser": ["admin.local", "admin.ldap", "admin.domain"], "grantByDefault": true },
+                "account": { "allowUser": ["admin.local", "admin.ldap", "admin.domain"], "grantByDefault": true },
+                "album": { "allowUser": ["admin.local", "admin.ldap", "admin.domain"], "grantByDefault": true },
+                "sync": { "allowUser": ["admin.local", "admin.ldap", "admin.domain"], "grantByDefault": true },
+                "config": { "allowUser": ["admin.local", "admin.ldap", "admin.domain"], "grantByDefault": true },
+                "log": { "allowUser": ["admin.local", "admin.ldap", "admin.domain"], "grantByDefault": true }
+            }
+        }
+    }
+}

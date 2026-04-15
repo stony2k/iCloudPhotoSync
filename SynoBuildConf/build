@@ -1,0 +1,10 @@
+#!/bin/bash
+# Install Python dependencies into lib/vendor/
+VENDOR_DIR="/source/iCloudPhotoSync/lib/vendor"
+mkdir -p "$VENDOR_DIR"
+
+pip3 install --target="$VENDOR_DIR" -r /source/iCloudPhotoSync/requirements.txt 2>/dev/null || \
+python3 -m pip install --target="$VENDOR_DIR" -r /source/iCloudPhotoSync/requirements.txt 2>/dev/null || \
+echo "WARNING: pip install failed, will need manual dependency install"
+
+exit 0

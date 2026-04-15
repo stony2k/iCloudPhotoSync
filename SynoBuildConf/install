@@ -1,0 +1,59 @@
+#!/bin/bash
+source /pkgscripts-ng/include/pkg_util.sh
+
+package="iCloudPhotoSync"
+# Derive version from INFO.sh so we only have one place to bump.
+version=$(grep "^version=" INFO.sh | head -1 | cut -d\" -f2)
+
+PKG_DIR=/tmp/_pkg_dir
+SPK_DIR=/image/packages
+
+create_package_tgz() {
+    local tgz_dir=/tmp/_package_tgz
+    rm -rf "$tgz_dir" && mkdir -p "$tgz_dir"
+
+    # UI files
+    cp -a ui "$tgz_dir/ui"
+    chmod +x "$tgz_dir/ui/api.cgi"
+
+    # WebAPI (CGI + routing)
+    mkdir -p "$tgz_dir/webapi"
+    cp -a webapi/* "$tgz_dir/webapi/"
+    chmod +x "$tgz_dir/webapi/iCloudPhotoSync.cgi"
+
+    # Python backend library
+    cp -a lib "$tgz_dir/lib"
+
+    # Executables
+    if [ -d bin ]; then
+        cp -a bin "$tgz_dir/bin"
+        chmod +x "$tgz_dir/bin/"* 2>/dev/null
+    fi
+
+    pkg_make_package "$tgz_dir" "${PKG_DIR}"
+}
+
+create_spk() {
+    mkdir -p "${SPK_DIR}"
+
+    mkdir -p "${PKG_DIR}/scripts"
+    cp -a scripts/* "${PKG_DIR}/scripts/"
+
+    cp PACKAGE_ICON.PNG "${PKG_DIR}/"
+    cp PACKAGE_ICON_256.PNG "${PKG_DIR}/"
+
+    ./INFO.sh > "${PKG_DIR}/INFO"
+
+    mkdir -p "${PKG_DIR}/conf"
+    cp -a conf/* "${PKG_DIR}/conf/"
+
+    pkg_make_spk "${PKG_DIR}" "${SPK_DIR}" "${package}-noarch-${version}.spk"
+}
+
+main() {
+    rm -rf "${PKG_DIR}" && mkdir -p "${PKG_DIR}"
+    create_package_tgz
+    create_spk
+}
+
+main

@@ -1,0 +1,18 @@
+#!/bin/sh
+# Runs as the package user on DSM 7 community packages. DSM calls the
+# stop action before preuninst, so processes should already be gone —
+# this is a belt-and-suspenders cleanup for any stragglers.
+TARGET_DIR="/var/packages/iCloudPhotoSync/target"
+
+pkill -f "$TARGET_DIR/bin/sync_runner.py" 2>/dev/null || true
+pkill -f "$TARGET_DIR/bin/scheduler.py" 2>/dev/null || true
+sleep 1
+pkill -9 -f "$TARGET_DIR/bin/sync_runner.py" 2>/dev/null || true
+pkill -9 -f "$TARGET_DIR/bin/scheduler.py" 2>/dev/null || true
+
+# Remove any legacy cron / sudoers artefacts from older versions
+sed -i "/#iCloudPhotoSync/d" /etc/crontab 2>/dev/null || true
+rm -f /etc/cron.d/iCloudPhotoSync 2>/dev/null || true
+rm -f /etc/sudoers.d/iCloudPhotoSync 2>/dev/null || true
+
+exit 0

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Require Python 3 before install. DSM 7.2 ships /usr/bin/python3 as a
+# system binary; if it's absent the user likely deleted it or is on a
+# stripped-down build. We check early so install fails with a clear
+# message instead of the app erroring out later at runtime.
+if ! command -v /usr/bin/python3 >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
+    echo "iCloud Photo Sync ben\u00f6tigt Python 3. Bitte zuerst Python 3 installieren."
+    exit 1
+fi
+exit 0

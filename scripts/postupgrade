@@ -1,0 +1,15 @@
+#!/bin/sh
+# Re-apply permissions after upgrade (runs as root)
+PKG_USER="iCloudPhotoSync"
+
+# Grant package user read/write on all existing shared folders
+/usr/syno/sbin/synoshare --enum ALL 2>/dev/null | sed '1,/Listed:/d' | while read share; do
+    [ -z "$share" ] && continue
+    /usr/syno/sbin/synoshare --setuser "$share" RW + "$PKG_USER" 2>/dev/null || true
+done
+
+# Clean up old files from previous versions
+rm -f /etc/sudoers.d/iCloudPhotoSync
+rm -f /etc/cron.d/iCloudPhotoSync
+
+exit 0
