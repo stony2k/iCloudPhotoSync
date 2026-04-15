@@ -5,6 +5,7 @@ Runs as a proper DSM app with its own tile, settings UI, scheduler daemon, and D
 
 <img width="1021" height="542" alt="Screenshot 2026-04-15 092935" src="https://github.com/user-attachments/assets/93f6764b-89a2-427e-b647-f8b992005909" />
 [More Screenshots](https://github.com/Euphonique/iCloudPhotoSync/blob/79e2973fbf9734c54b42b5a0483ada9e1cec59cb/SCREENSHOTS.md)
+
 ## Why this exists
 
 When I first set up my DiskStation, I couldn’t believe there was no way to sync Apple Photos directly with it. Even Cloud Sync doesn’t offer this option. So I spent a long time looking for a way to back up my photos: Docker images, even a separate virtual machine running on iCloud. None of it was really how it should be.
