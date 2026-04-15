@@ -141,4 +141,4 @@ Runtime data lives under `/var/packages/iCloudPhotoSync/var/`:
 
 ## Disclaimer
 This software comes with no warranty; I assume no liability for any damage to hardware or software, or for any loss of data, that may result from using the app. 
-Not affiliated with or endorsed by Apple Inc. "Apple", "iCloud", and related marks are trademarks of Apple Inc. This package talks to Apple's private-but-reverse-engineered iCloud APIs; Apple can change these at any time and break the sync. If that happens, open an issue — or better, a pull request.
+Not affiliated with or endorsed by Apple Inc. "Apple", "iCloud", "Synology", "DSM", and related marks are trademarks of Apple Inc. or Synology Inc. This package talks to Apple's private-but-reverse-engineered iCloud APIs; Apple can change these at any time and break the sync. If that happens, open an issue — or better, a pull request.
