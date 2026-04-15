@@ -1,10 +1,15 @@
 # Synology iCloud Photo Sync
 
 A native Synology DSM 7.2 package that automatically mirrors your iCloud photo library to your NAS — so your memories live on storage you own, not just on Apple's servers.
-
 Runs as a proper DSM app with its own tile, settings UI, scheduler daemon, and DSM notifications. No Docker, no cron hacks, no SSH fiddling.
 
+<img width="1021" height="542" alt="Screenshot 2026-04-15 092935" src="https://github.com/user-attachments/assets/93f6764b-89a2-427e-b647-f8b992005909" />
+More Screenshots: SCREENSHOTS.md
+
 ## Why this exists
+
+When I first set up my DiskStation, I couldn’t believe there was no way to sync Apple Photos directly with it. Even Cloud Sync doesn’t offer this option. So I spent a long time looking for a way to back up my photos: Docker images, even a separate virtual machine running on iCloud. None of it was really how it should be.
+But that’s all over now: I’m bringing you the iCloud Photos Sync app — just as it should have officially existed all along.
 
 iCloud is convenient but it's a black box: Apple decides what stays, what gets "optimized", and what happens if your account is locked or deleted. A local mirror on your Synology gives you:
 
@@ -68,10 +73,10 @@ The installer will:
 1. Click **Add account** and enter your Apple ID + password.
 2. Approve the 2FA prompt on one of your trusted Apple devices, or fall back to SMS.
 3. Wait for the album list to load (a few seconds to a minute for large libraries).
-4. Pick which albums to sync, choose folder structure and formats, save.
-5. Click **Sync now** when you're ready — this kicks off the first run and arms the scheduler. Subsequent syncs run automatically on the per-account interval you set.
+4. Pick which albums to sync, choose folder structure and formats.
+5. The first sync starts automatically. Subsequent syncs run on the per-account interval you set.
 
-Nothing starts syncing on its own until you press Sync Now at least once, so take your time with the settings. The first full sync of a large library can take hours. Later incremental runs typically finish in seconds to a few minutes.
+The first full sync of a large library can take hours. Subsequent syncs are incremental and typically finish in seconds to a few minutes.
 
 ## Requirements
 
