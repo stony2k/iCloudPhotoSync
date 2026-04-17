@@ -175,7 +175,45 @@ class PhotosService:
             data=json.dumps(payload),
             headers={"Content-Type": "text/plain"},
         )
+        data = response.json()
+        self._check_cloudkit_adp(data)
+        return data
+
+    def _lookup_records(self, record_names):
+        """Fetch records by recordName via CloudKit records/lookup."""
+        url = "%s/records/lookup" % self._service_endpoint
+        payload = {
+            "records": [
+                {"recordName": rn, "zoneID": self.ZONE_ID}
+                for rn in record_names
+            ],
+        }
+        response = self.session.post(
+            url,
+            params=self.params,
+            data=json.dumps(payload),
+            headers={"Content-Type": "text/plain"},
+        )
         return response.json()
+
+    def refresh_photo_url(self, photo):
+        """Re-fetch a photo's master record to get fresh download URLs.
+
+        Returns a new URL or None if the lookup fails.
+        """
+        try:
+            data = self._lookup_records([photo.id])
+            for record in data.get("records", []):
+                if record.get("recordName") == photo.id:
+                    orig = record.get("fields", {}).get(
+                        "resOriginalRes", {}).get("value", {})
+                    url = orig.get("downloadURL")
+                    if url:
+                        photo._master = record
+                        return PhotoAsset._fix_url(url)
+        except Exception:
+            LOGGER.exception("Failed to refresh URL for %s", photo.id)
+        return None
 
     def _batch_query(self, payload):
         """Execute a CloudKit batch query."""
@@ -186,7 +224,21 @@ class PhotosService:
             data=json.dumps(payload),
             headers={"Content-Type": "text/plain"},
         )
-        return response.json()
+        data = response.json()
+        self._check_cloudkit_adp(data)
+        return data
+
+    @staticmethod
+    def _check_cloudkit_adp(data):
+        """Detect CloudKit errors that indicate ADP is blocking access."""
+        from pyicloud_ipd.exceptions import PyiCloudADPProtectionException
+        if not isinstance(data, dict):
+            return
+        for record in data.get("records", []):
+            reason = record.get("serverErrorCode", "")
+            if reason in ("ACCESS_DENIED", "PRIVATE_DB_DISABLED",
+                          "ZONE_NOT_FOUND"):
+                raise PyiCloudADPProtectionException(reason)
 
     def check_indexing(self):
         """Check if Photos library indexing is complete."""

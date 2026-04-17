@@ -23,6 +23,11 @@ import heic_converter
 
 LOGGER = logging.getLogger("sync_engine")
 
+
+class _UrlExpiredError(Exception):
+    """Raised when an iCloud CDN URL returns 410 Gone (expired)."""
+    pass
+
 # Map folder structure config values to strftime-like path builders
 FOLDER_BUILDERS = {
     "year_month_day": lambda ts: _ts_path(ts, "%Y/%m/%d"),
@@ -100,6 +105,8 @@ def _download_file(url, dest_path, session=None):
     for attempt in range(3):
         try:
             r = (session or requests).get(url, timeout=timeout, stream=True)
+            if r.status_code == 410:
+                raise _UrlExpiredError("410 Gone for url: %s" % url)
             r.raise_for_status()
             with open(tmp_path, "wb") as f:
                 for chunk in r.iter_content(chunk_size=65536):
@@ -113,13 +120,18 @@ def _download_file(url, dest_path, session=None):
             os.chmod(tmp_path, 0o644)
             os.replace(tmp_path, dest_path)
             return True
+        except _UrlExpiredError:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
         except Exception as e:
             last_err = e
             try:
                 os.remove(tmp_path)
             except OSError:
                 pass
-            # Short backoff; likely a transient rate-limit or stalled stream.
             time.sleep(1 + attempt * 2)
     LOGGER.error("Download failed for %s after retries: %s", dest_path, last_err)
     return False
@@ -138,8 +150,55 @@ def _writable(path):
             f.write("ok")
         os.remove(probe)
         return True
-    except OSError:
+    except OSError as e:
+        LOGGER.error("Write test failed for %s: %s", path, e)
+        _log_path_diagnostics(path)
         return False
+
+
+def _log_path_diagnostics(path):
+    """Log detailed permission info so support requests are actionable."""
+    import grp
+    import pwd
+    try:
+        uid = os.getuid()
+        try:
+            uname = pwd.getpwuid(uid).pw_name
+        except KeyError:
+            uname = str(uid)
+        gids = os.getgroups()
+        gnames = []
+        for g in gids:
+            try:
+                gnames.append(grp.getgrgid(g).gr_name)
+            except KeyError:
+                gnames.append(str(g))
+        LOGGER.error("  Running as: uid=%s(%s) groups=%s", uid, uname, ",".join(gnames))
+    except Exception:
+        pass
+
+    # Walk up the path tree to find where permissions diverge.
+    parts = path.rstrip("/")
+    while parts and parts != "/":
+        try:
+            st = os.stat(parts)
+            try:
+                owner = pwd.getpwuid(st.st_uid).pw_name
+            except (KeyError, Exception):
+                owner = str(st.st_uid)
+            try:
+                group = grp.getgrgid(st.st_gid).gr_name
+            except (KeyError, Exception):
+                group = str(st.st_gid)
+            mode = oct(st.st_mode)[-3:]
+            r = os.access(parts, os.R_OK)
+            w = os.access(parts, os.W_OK)
+            x = os.access(parts, os.X_OK)
+            LOGGER.error("  %s  owner=%s:%s mode=%s access=r%s/w%s/x%s",
+                         parts, owner, group, mode, r, w, x)
+        except OSError:
+            LOGGER.error("  %s  does not exist", parts)
+        parts = os.path.dirname(parts)
 
 
 def _resolve_target_dir(path, account_id=None):
@@ -432,9 +491,16 @@ def _run_sync_locked(account_id):
         progress.status = "error"
         progress.error = (
             "Target directory %r is not writable by the package user "
-            "'iCloudPhotoSync'. Open Control Panel -> Shared Folder -> "
-            "[target share] -> Edit -> Permissions and grant RW to the "
-            "'iCloudPhotoSync' system user, or pick a different target folder."
+            "'iCloudPhotoSync'. To fix this:\n"
+            "1. Open Control Panel → Shared Folder\n"
+            "2. Select the target share → Edit → Permissions tab\n"
+            "3. IMPORTANT: Change the dropdown from 'Local Users' to "
+            "'System internal user'\n"
+            "4. Check 'Read/Write' for the 'iCloudPhotoSync' user\n"
+            "5. Click Save\n\n"
+            "The package user is a system internal user and will NOT "
+            "appear in the 'Local Users' list. You must switch the "
+            "dropdown first."
         ) % target_dir
         progress.save()
         return progress
@@ -452,7 +518,24 @@ def _run_sync_locked(account_id):
     progress.started_at = int(time.time())
     progress.save()
 
-    photos_svc = client.api.photos
+    try:
+        photos_svc = client.api.photos
+    except Exception as e:
+        from vendor.pyicloud_ipd.exceptions import (
+            PyiCloudADPProtectionException,
+            PyiCloudServiceNotActivatedException,
+        )
+        if isinstance(e, (PyiCloudADPProtectionException, PyiCloudServiceNotActivatedException)):
+            LOGGER.error(
+                "iCloud Advanced Data Protection (ADP) appears to be enabled "
+                "for account %s. ADP encrypts iCloud Photos end-to-end, "
+                "blocking web-API access. Disable ADP or enable temporary "
+                "web access at icloud.com.", account_id)
+            progress.status = "error"
+            progress.error = str(e)
+            progress.save()
+            return progress
+        raise
 
     try:
         # Build a plan with photo counts upfront so total_photos is a
@@ -462,7 +545,16 @@ def _run_sync_locked(account_id):
             try:
                 ps_album = photos_svc.albums.get("All Photos")
                 ps_count = ps_album.photo_count if ps_album else 0
-            except Exception:
+            except Exception as e:
+                from vendor.pyicloud_ipd.exceptions import PyiCloudADPProtectionException
+                if isinstance(e, PyiCloudADPProtectionException):
+                    LOGGER.error(
+                        "ADP blocks access to iCloud Photos for account %s: %s",
+                        account_id, e)
+                    progress.status = "error"
+                    progress.error = str(e)
+                    progress.save()
+                    return progress
                 LOGGER.exception("Failed to get photo_count for All Photos")
                 ps_count = 0
             plan.append(("All Photos", "photostream", "", ps_count, 0))
@@ -703,11 +795,35 @@ def _sync_album(account_id, photos_svc, album_name, target_dir, sync_config, pro
         workers = max(1, min(8, int(sync_config.get("parallel_downloads", 4) or 4)))
         formats = sync_config.get("formats", "original")
 
+        # One-shot warning per sync if the user requested JPG output but no
+        # converter is available. Without this, sync silently leaves HEIC
+        # files in place and the user thinks conversion is broken.
+        if formats in ("jpg_only", "both") and not heic_converter.can_convert():
+            LOGGER.warning(
+                "HEIC->JPG conversion requested (formats=%s) but no backend is "
+                "available. HEIC files will be saved as-is. Install the "
+                "SynoCommunity imagemagick package or reinstall this app with "
+                "bundled binaries included.", formats,
+            )
+
         def _process(task):
             photo, url, fpath, fname = task
             if should_stop(account_id):
                 return (photo, fname, fpath, False)
-            ok = _download_file(url, fpath, session=session)
+            try:
+                ok = _download_file(url, fpath, session=session)
+            except _UrlExpiredError:
+                LOGGER.info("URL expired (410) for %s, refreshing...", fname)
+                fresh_url = photos_svc.refresh_photo_url(photo)
+                if fresh_url:
+                    try:
+                        ok = _download_file(fresh_url, fpath, session=session)
+                    except _UrlExpiredError:
+                        LOGGER.error("URL expired again after refresh for %s", fname)
+                        ok = False
+                else:
+                    LOGGER.error("Could not refresh URL for %s", fname)
+                    ok = False
             if not ok:
                 return (photo, fname, fpath, False)
             if formats in ("jpg_only", "both") and heic_converter.is_heic(fname):

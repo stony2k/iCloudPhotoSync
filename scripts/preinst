@@ -1,10 +1,26 @@
 #!/bin/sh
-# Require Python 3 before install. DSM 7.2 ships /usr/bin/python3 as a
-# system binary; if it's absent the user likely deleted it or is on a
-# stripped-down build. We check early so install fails with a clear
-# message instead of the app erroring out later at runtime.
-if ! command -v /usr/bin/python3 >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
-    echo "iCloud Photo Sync ben\u00f6tigt Python 3. Bitte zuerst Python 3 installieren."
-    exit 1
+# Require Python 3 before install. DSM 7.2+ ships /usr/bin/python3 (3.8),
+# but on stripped-down builds (some j-series) or when the user installed
+# the Python3 package from Package Center, the interpreter lives elsewhere.
+# Accept any of the common locations; start-stop-status re-uses the same
+# detection logic at runtime.
+for cand in \
+    /usr/bin/python3 \
+    /usr/bin/python3.8 \
+    /usr/bin/python3.9 \
+    /usr/bin/python3.10 \
+    /usr/bin/python3.11 \
+    /usr/local/bin/python3 \
+    /var/packages/py3k/target/usr/bin/python3 \
+    /var/packages/python3/target/usr/bin/python3
+do
+    if [ -x "$cand" ]; then
+        exit 0
+    fi
+done
+# Last resort: PATH lookup.
+if command -v python3 >/dev/null 2>&1; then
+    exit 0
 fi
-exit 0
+echo "iCloud Photo Sync ben\u00f6tigt Python 3. Bitte zuerst das Python 3 Paket \u00fcber das Synology Package Center installieren."
+exit 1

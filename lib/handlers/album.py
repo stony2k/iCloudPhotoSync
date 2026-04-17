@@ -15,6 +15,24 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import config_manager
 import icloud_client
 
+ADP_ERROR_CODE = 320
+
+
+def _maybe_adp_error(exc, fallback_code):
+    """Return an ADP-specific error response when appropriate."""
+    from vendor.pyicloud_ipd.exceptions import (
+        PyiCloudADPProtectionException,
+        PyiCloudServiceNotActivatedException,
+    )
+    if isinstance(exc, PyiCloudADPProtectionException):
+        return {"success": False, "error": {"code": ADP_ERROR_CODE, "message": str(exc)}}
+    if isinstance(exc, PyiCloudServiceNotActivatedException):
+        return {"success": False, "error": {"code": ADP_ERROR_CODE, "message":
+            "iCloud Photos service is not available for this account. "
+            "This is often caused by iCloud Advanced Data Protection (ADP). "
+            "Disable ADP or enable temporary web access at icloud.com."}}
+    return {"success": False, "error": {"code": fallback_code, "message": str(exc)}}
+
 
 def _cache_path(account_id):
     return os.path.join(config_manager.get_account_dir(account_id), "album_cache.json")
@@ -130,7 +148,7 @@ def _list_albums(params):
         }}
 
     except Exception as e:
-        return {"success": False, "error": {"code": 310, "message": str(e)}}
+        return _maybe_adp_error(e, 310)
 
 
 def _album_count(params):
@@ -159,7 +177,7 @@ def _album_count(params):
         return {"success": True, "data": {"album": album_name, "photo_count": count}}
 
     except Exception as e:
-        return {"success": False, "error": {"code": 312, "message": str(e)}}
+        return _maybe_adp_error(e, 312)
 
 
 def _list_photos(params):

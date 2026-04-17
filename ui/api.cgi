@@ -189,6 +189,187 @@ def download_zip(raw_body):
     sys.stdout.buffer.write(data)
 
 
+def _log_sanitizer():
+    """Build a (text) -> text function that scrubs account-identifying data.
+
+    We ship this ZIP to support requests / GitHub issues, so anything that
+    leaks the user's Apple ID, account UUID, or session tokens is a privacy
+    bug. The scrubber runs per-line and keeps a stable alias (apple-id-1,
+    account-1) so multi-account logs remain correlatable after redaction.
+    """
+    import re
+    import config_manager
+
+    email_aliases = {}
+    account_aliases = {}
+
+    # Preload known account IDs + Apple IDs from config so redaction is
+    # consistent even if they don't happen to appear in this particular
+    # log file (and to keep numbering stable across multiple exports).
+    try:
+        cfg = config_manager.load_config() or {}
+        for i, acc in enumerate(cfg.get("accounts") or [], 1):
+            apple_id = (acc.get("apple_id") or "").strip().lower()
+            if apple_id:
+                email_aliases[apple_id] = "<apple-id-%d>" % i
+            account_id = acc.get("id") or ""
+            if account_id:
+                account_aliases[account_id] = "<account-%d>" % i
+    except Exception:
+        pass
+
+    email_re = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+    uuid_re = re.compile(r"\b[0-9a-fA-F]{8}\b")  # 8-hex account-id prefix style
+    # Catch auth-sensitive key=value chunks on a single line. We look for the
+    # key name and nuke the rest of the token up to whitespace / quote / comma.
+    secret_kv_re = re.compile(
+        r"(?i)(password|passwd|pwd|token|cookie|authorization|x-apple-[\w-]*|"
+        r"session[_-]?id|trust[_-]?token|srp[_-]?[a-z]*|apple[_-]?id[_-]?(?:\w*))"
+        r"\s*[:=]\s*['\"]?([^\s,'\")}]+)",
+    )
+    # Authorization-style header values: "Bearer <tok>".
+    bearer_re = re.compile(r"(?i)\bBearer\s+\S+")
+
+    def alias_email(match):
+        addr = match.group(0).lower()
+        if addr not in email_aliases:
+            email_aliases[addr] = "<apple-id-%d>" % (len(email_aliases) + 1)
+        return email_aliases[addr]
+
+    def alias_uuid(match):
+        uuid = match.group(0)
+        # Don't alias short hex chunks that are unlikely to be account ids —
+        # timestamps / log levels like "INFO" aren't hex anyway. We only
+        # redact values that appear in known_account_ids; unrecognised hex
+        # (git SHAs, request IDs) is safe to leave alone.
+        if uuid in account_aliases:
+            return account_aliases[uuid]
+        return uuid
+
+    def sanitize(text):
+        text = email_re.sub(alias_email, text)
+        text = uuid_re.sub(alias_uuid, text)
+        text = secret_kv_re.sub(lambda m: "%s=<redacted>" % m.group(1), text)
+        text = bearer_re.sub("Bearer <redacted>", text)
+        return text
+
+    return sanitize
+
+
+def export_logs_zip():
+    """Stream all package logs + INFO + version as a ZIP for support reports.
+
+    Used by the "Export logs" button in the Logs tab. Every text file is
+    passed through a sanitizer that strips Apple IDs, account UUIDs, and
+    auth-shaped key=value tokens before it lands in the ZIP. We never
+    include config.json or session cookie files.
+    """
+    import zipfile
+    import io
+    import time as _time
+    import config_manager
+
+    log_dir = os.path.join(config_manager.PKG_VAR, "logs")
+    pkg_dir = "/var/packages/iCloudPhotoSync"
+    sanitize = _log_sanitizer()
+
+    def _sanitize_and_add(zf, src_path, arcname):
+        try:
+            with open(src_path, "r", errors="replace") as f:
+                content = sanitize(f.read())
+        except OSError:
+            return
+        zf.writestr(arcname, content)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Every file in var/logs/ (sync.log, scheduler.log, cron.log,
+        # startup-error.log, etc.). We read as text and sanitize — any
+        # binary artifact in logs/ (shouldn't exist, but just in case) is
+        # skipped by the errors="replace" read.
+        if os.path.isdir(log_dir):
+            for name in sorted(os.listdir(log_dir)):
+                path = os.path.join(log_dir, name)
+                if os.path.isfile(path):
+                    _sanitize_and_add(zf, path, "logs/" + name)
+
+        # INFO is the pkg metadata (version, maintainer). It doesn't contain
+        # user data, but run it through the sanitizer anyway for defence in
+        # depth (the maintainer email is there but that's public).
+        info = os.path.join(pkg_dir, "INFO")
+        if os.path.isfile(info):
+            _sanitize_and_add(zf, info, "INFO")
+
+        # A small environment snapshot so a support report has DSM version,
+        # architecture, and the detected Python path in one place. We
+        # explicitly do NOT include serial numbers from /proc/cpuinfo —
+        # ARM-j boards sometimes expose the NAS serial there.
+        try:
+            lines = []
+            lines.append("timestamp: %s" % _time.strftime("%Y-%m-%d %H:%M:%S"))
+            lines.append("python: %s" % sys.version.replace("\n", " "))
+            lines.append("platform: %s" % sys.platform)
+            try:
+                import platform as _p
+                lines.append("machine: %s" % _p.machine())
+                lines.append("system: %s %s" % (_p.system(), _p.release()))
+            except Exception:
+                pass
+            try:
+                with open("/etc.defaults/VERSION", "r") as f:
+                    lines.append("---- /etc.defaults/VERSION ----")
+                    for ln in f.read().splitlines():
+                        # unique= and upnpmodelname= contain NAS-identifying
+                        # values; strip them. Everything else (majorversion,
+                        # build, etc.) is useful for debugging.
+                        low = ln.lower()
+                        if low.startswith("unique=") or "upnp" in low or \
+                           "serial" in low or "mac" in low:
+                            continue
+                        lines.append(ln)
+            except OSError:
+                pass
+            try:
+                with open("/proc/cpuinfo", "r") as f:
+                    lines.append("---- /proc/cpuinfo (architecture only) ----")
+                    for ln in f.read().splitlines():
+                        low = ln.lower()
+                        # Keep arch/feature info; drop serial / hardware IDs.
+                        if low.startswith(("serial", "hardware", "revision")):
+                            continue
+                        lines.append(ln)
+                        if len(lines) > 400:
+                            break
+            except OSError:
+                pass
+            zf.writestr("environment.txt", "\n".join(lines))
+        except Exception:
+            pass
+
+        # Also include a one-line note that the archive was sanitized so
+        # anyone receiving it knows Apple IDs are aliases, not the originals.
+        zf.writestr(
+            "README.txt",
+            "iCloud Photo Sync support bundle\n"
+            "Generated: %s\n\n"
+            "Email addresses (Apple IDs) have been replaced with aliases\n"
+            "like <apple-id-1>. Account UUIDs, auth tokens, passwords, and\n"
+            "trust cookies have been redacted. config.json and session\n"
+            "cookie files are never included in this archive.\n" %
+            _time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+
+    data = buf.getvalue()
+    zipname = "iCloudPhotoSync-logs-%s.zip" % _time.strftime("%Y%m%d-%H%M%S")
+    sys.stdout.buffer.write(b"Content-Type: application/zip\r\n")
+    sys.stdout.buffer.write(("Content-Length: %d\r\n" % len(data)).encode())
+    sys.stdout.buffer.write(
+        ('Content-Disposition: attachment; filename="%s"\r\n' % zipname).encode()
+    )
+    sys.stdout.buffer.write(b"\r\n")
+    sys.stdout.buffer.write(data)
+
+
 def _method_from_query():
     """Parse the 'method' value from QUERY_STRING without touching stdin."""
     import urllib.parse
@@ -213,6 +394,9 @@ def main():
         length = int(os.environ.get("CONTENT_LENGTH", "0") or 0)
         raw_body = sys.stdin.read(length) if length else ""
         download_zip(raw_body)
+        return
+    if method == "log_export":
+        export_logs_zip()
         return
 
     params = cgi.FieldStorage()

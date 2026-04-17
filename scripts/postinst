@@ -17,4 +17,45 @@ fi
 rm -f /etc/sudoers.d/iCloudPhotoSync 2>/dev/null || true
 rm -f /etc/cron.d/iCloudPhotoSync 2>/dev/null || true
 
+# Post-install message: guide user to grant permissions on custom shared folders.
+# The default share "iCloudPhotos" is created by conf/resource (data-share) and
+# works out of the box. But if the user wants to sync to a different folder,
+# they need to manually grant RW to the package user.
+if [ -n "$SYNOPKG_TEMP_LOGFILE" ]; then
+    # Detect DSM language (default to English)
+    LANG_FILE="/usr/syno/etc/preference/VDSM/mailsetting"
+    DSM_LANG=""
+    if [ -f "/usr/syno/etc/preference/${USER}/synodefault" ]; then
+        DSM_LANG=$(grep -o '"lang":"[^"]*"' "/usr/syno/etc/preference/${USER}/synodefault" 2>/dev/null | head -1 | sed 's/"lang":"//;s/"//')
+    fi
+
+    if [ "$DSM_LANG" = "ger" ]; then
+        cat >> "$SYNOPKG_TEMP_LOGFILE" <<'MSGEOF'
+<br><p style="color:blue"><big><b>Installation erfolgreich!</b></big></p>
+<br><p>Fotos werden standardmäßig in den Ordner <b>/volume1/iCloudPhotos</b> synchronisiert, der automatisch eingerichtet wurde.</p>
+<br><p style="color:blue"><b>Eigenen Zielordner verwenden?</b></p>
+<p>Wenn du einen anderen Shared Folder als Ziel verwenden möchtest, musst du dem Paket-Benutzer Schreibzugriff gewähren:</p><br>
+<p>1. Öffne <b>Systemsteuerung</b> und wähle <b>Gemeinsamer Ordner</b></p>
+<p>2. Wähle den gewünschten Ordner und klicke auf <b>Bearbeiten</b></p>
+<p>3. Klicke auf den Reiter <b>Berechtigungen</b></p>
+<p>4. <span style="color:red"><b>Wichtig:</b></span> Ändere das Dropdown von <b>Lokale Benutzer</b> auf <b>Systeminterner Benutzer</b></p>
+<p>5. Aktiviere die <b>Lesen/Schreiben</b>-Checkbox für den Benutzer <b>iCloudPhotoSync</b></p>
+<p>6. Klicke auf <b>Speichern</b></p>
+MSGEOF
+    else
+        cat >> "$SYNOPKG_TEMP_LOGFILE" <<'MSGEOF'
+<br><p style="color:blue"><big><b>Installation successful!</b></big></p>
+<br><p>Photos will be synced to <b>/volume1/iCloudPhotos</b> by default, which has been set up automatically.</p>
+<br><p style="color:blue"><b>Want to use a custom target folder?</b></p>
+<p>If you want to sync to a different shared folder, you need to grant write access to the package user:</p><br>
+<p>1. Open <b>Control Panel</b> and select <b>Shared Folder</b></p>
+<p>2. Select the target share and click <b>Edit</b></p>
+<p>3. Click the <b>Permissions</b> tab</p>
+<p>4. <span style="color:red"><b>Important:</b></span> Change the dropdown from <b>Local Users</b> to <b>System internal user</b></p>
+<p>5. Check the <b>Read/Write</b> checkbox for the <b>iCloudPhotoSync</b> user</p>
+<p>6. Click <b>Save</b></p>
+MSGEOF
+    fi
+fi
+
 exit 0

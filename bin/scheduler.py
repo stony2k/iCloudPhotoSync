@@ -13,6 +13,35 @@ import signal
 import sys
 import threading
 import time
+import traceback
+
+
+def _record_startup_failure(exc):
+    # start-stop-status passes ICLOUD_STARTUP_ERR so a crash before the
+    # regular log handlers are wired up still lands somewhere visible.
+    # Fallback to a conventional path so this is useful even when invoked
+    # outside the DSM lifecycle (manual debugging).
+    path = os.environ.get("ICLOUD_STARTUP_ERR") or \
+        "/var/packages/iCloudPhotoSync/var/logs/startup-error.log"
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except OSError:
+        pass
+    try:
+        with open(path, "a") as f:
+            f.write("==== %s scheduler.py import/startup failure ====\n" %
+                    time.strftime("%Y-%m-%d %H:%M:%S"))
+            f.write("python: %s\n" % sys.version.replace("\n", " "))
+            f.write("platform: %s\n" % sys.platform)
+            f.write("cwd: %s\n" % os.getcwd())
+            f.write("sys.path: %s\n" % sys.path)
+            traceback.print_exc(file=f)
+            f.write("\n")
+    except OSError:
+        # We can't write the diagnostic; re-raise so DSM at least gets the
+        # stderr via start-stop-status's redirect to scheduler.log.
+        raise exc
+
 
 PKG_TARGET = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 LIB_DIR = os.path.join(PKG_TARGET, "lib")
@@ -21,9 +50,13 @@ sys.path.insert(0, LIB_DIR)
 if os.path.isdir(VENDOR_DIR):
     sys.path.insert(0, VENDOR_DIR)
 
-import config_manager
-import notifier
-import sync_engine
+try:
+    import config_manager
+    import notifier
+    import sync_engine
+except Exception as _e:
+    _record_startup_failure(_e)
+    raise
 
 # Apple's iCloud trusted-session cookie is valid ~60 days. Warn at <14 days
 # remaining so the user has time to re-authenticate before the nightly sync

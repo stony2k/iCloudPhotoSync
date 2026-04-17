@@ -8,6 +8,7 @@ from requests import Session
 
 from pyicloud_ipd.exceptions import (
     PyiCloud2SARequiredException,
+    PyiCloudADPProtectionException,
     PyiCloudAPIResponseException,
     PyiCloudServiceNotActivatedException,
     PyiCloudServiceUnavailableException,
@@ -163,6 +164,12 @@ class PyiCloudSession(Session):
             )
             raise PyiCloudServiceNotActivatedException(reason, code)
         if code == "ACCESS_DENIED":
+            reason_lower = (reason or "").lower()
+            if any(kw in reason_lower for kw in (
+                "private database", "not accessible", "not available",
+                "end-to-end", "advanced data protection",
+            )):
+                raise PyiCloudADPProtectionException(reason)
             reason = (
                 reason + ". Please wait a few minutes then try again. "
                 "The remote servers might be trying to throttle requests."

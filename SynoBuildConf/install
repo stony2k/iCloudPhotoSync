@@ -24,10 +24,18 @@ create_package_tgz() {
     # Python backend library
     cp -a lib "$tgz_dir/lib"
 
-    # Executables
+    # Executables — including the bundled heif-convert tree under bin/heif/<arch>/
     if [ -d bin ]; then
         cp -a bin "$tgz_dir/bin"
-        chmod +x "$tgz_dir/bin/"* 2>/dev/null
+        # Only top-level entries in bin/ should be executable flags. The per-arch
+        # heif-convert binaries need exec; the .so files must NOT be +x or some
+        # loaders reject them. chmod them explicitly.
+        chmod +x "$tgz_dir/bin/"*.* 2>/dev/null || true
+        chmod +x "$tgz_dir/bin/"*.sh 2>/dev/null || true
+        chmod +x "$tgz_dir/bin/"*.py 2>/dev/null || true
+        for archbin in "$tgz_dir/bin/heif/"*/heif-convert; do
+            [ -f "$archbin" ] && chmod +x "$archbin"
+        done
     fi
 
     pkg_make_package "$tgz_dir" "${PKG_DIR}"

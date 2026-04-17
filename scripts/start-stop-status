@@ -6,11 +6,34 @@ PKG_DIR="/var/packages/iCloudPhotoSync"
 TARGET_DIR="$PKG_DIR/target"
 VAR_DIR="$PKG_DIR/var"
 SCHEDULER="$TARGET_DIR/bin/scheduler.py"
-PYTHON="/usr/bin/python3"
 PID_FILE="$VAR_DIR/scheduler.pid"
-LOG_FILE="$VAR_DIR/logs/scheduler.log"
+LOG_DIR="$VAR_DIR/logs"
+LOG_FILE="$LOG_DIR/scheduler.log"
+STARTUP_ERR="$LOG_DIR/startup-error.log"
 
-mkdir -p "$VAR_DIR/logs" 2>/dev/null || true
+# Python interpreter detection. DSM 7.2+ has /usr/bin/python3. Older DSMs
+# or some j-series builds use the Python3 package from Package Center,
+# which installs under /var/packages/py3k/ or /var/packages/python3/.
+# Without this fallback the daemon dies silently before any log is written
+# and DSM shows the package as "stopped" immediately after start.
+find_python() {
+    for c in \
+        /usr/bin/python3 \
+        /usr/bin/python3.8 \
+        /usr/bin/python3.9 \
+        /usr/bin/python3.10 \
+        /usr/bin/python3.11 \
+        /usr/local/bin/python3 \
+        /var/packages/py3k/target/usr/bin/python3 \
+        /var/packages/python3/target/usr/bin/python3
+    do
+        [ -x "$c" ] && { echo "$c"; return 0; }
+    done
+    command -v python3 2>/dev/null && return 0
+    return 1
+}
+
+mkdir -p "$LOG_DIR" 2>/dev/null || true
 
 is_running() {
     [ -f "$PID_FILE" ] || return 1
@@ -19,12 +42,47 @@ is_running() {
     kill -0 "$PID" 2>/dev/null
 }
 
+log_startup_err() {
+    # Capture why start failed in a location the user (and we) can point
+    # at when debugging "package keeps stopping" reports. Timestamped so
+    # repeated start attempts build up a history.
+    {
+        echo "==== $(date '+%Y-%m-%d %H:%M:%S') start-stop-status failure ===="
+        echo "$@"
+    } >> "$STARTUP_ERR" 2>/dev/null
+}
+
 case $1 in
     start)
         if is_running; then
             exit 0
         fi
-        SYNOPKG_PKGVAR="$VAR_DIR" nohup "$PYTHON" "$SCHEDULER" >> "$LOG_FILE" 2>&1 &
+
+        PYTHON=$(find_python)
+        if [ -z "$PYTHON" ]; then
+            log_startup_err "No Python 3 interpreter found. Checked /usr/bin/python3(.8/.9/.10/.11), /usr/local/bin/python3, /var/packages/py3k/target/usr/bin/python3, /var/packages/python3/target/usr/bin/python3, and PATH. Install the 'Python 3' package from DSM Package Center."
+            exit 1
+        fi
+
+        if [ ! -f "$SCHEDULER" ]; then
+            log_startup_err "Scheduler script missing: $SCHEDULER"
+            exit 1
+        fi
+
+        # Sanity-check the interpreter once before we go nohup. If the
+        # interpreter can't even start (corrupted install, missing .so),
+        # surface the error synchronously instead of letting nohup eat it.
+        if ! "$PYTHON" -c "import sys; sys.exit(0)" >> "$STARTUP_ERR" 2>&1; then
+            log_startup_err "Python interpreter failed sanity check: $PYTHON"
+            exit 1
+        fi
+
+        # Kick it off. The scheduler wraps its own imports so top-level
+        # ImportError / syntax issues land in startup-error.log instead of
+        # silently disappearing.
+        SYNOPKG_PKGVAR="$VAR_DIR" \
+            ICLOUD_STARTUP_ERR="$STARTUP_ERR" \
+            nohup "$PYTHON" "$SCHEDULER" >> "$LOG_FILE" 2>&1 &
         echo $! > "$PID_FILE"
         exit 0
         ;;

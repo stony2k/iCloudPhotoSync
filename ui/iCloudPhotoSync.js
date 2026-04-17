@@ -1453,7 +1453,7 @@ Ext.define("SYNO.SDS.iCloudPhotoSync.AlbumGrid", {
         this.appWin.apiRequest("album", {
             action: "list",
             account_id: accountId
-        }, function (success, data, errMsg) {
+        }, function (success, data, errMsg, errObj) {
             if (success && data.albums) {
                 self.albumStore.loadData(data.albums);
                 self._applySyncConfig();
@@ -1468,12 +1468,24 @@ Ext.define("SYNO.SDS.iCloudPhotoSync.AlbumGrid", {
                 self._loadAlbumCounts(data.albums, 0);
             } else {
                 self.hideProgress();
-                if (!hadCache) {
-                    self.photoPanel.body.update(
-                        '<div style="text-align: center; padding: 40px; color: #c00;">' +
+                var isADP = errObj && errObj.code === 320;
+                var html;
+                if (isADP) {
+                    html = '<div style="text-align: center; padding: 40px;">' +
+                        '<div style="display: inline-block; max-width: 520px; text-align: left; background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; padding: 16px 20px;">' +
+                        '<div style="font-weight: bold; font-size: 14px; margin-bottom: 8px; color: #856404;">' +
+                        Ext.util.Format.htmlEncode(SYNO.SDS.iCloudPhotoSync._T("album:adp_title")) +
+                        '</div>' +
+                        '<div style="font-size: 13px; color: #856404; line-height: 1.5;">' +
+                        Ext.util.Format.htmlEncode(SYNO.SDS.iCloudPhotoSync._T("album:adp_message")) +
+                        '</div></div></div>';
+                } else if (!hadCache) {
+                    html = '<div style="text-align: center; padding: 40px; color: #c00;">' +
                         Ext.util.Format.htmlEncode(errMsg || SYNO.SDS.iCloudPhotoSync._T("album:error_load_failed")) +
-                        '</div>'
-                    );
+                        '</div>';
+                }
+                if (html) {
+                    self.photoPanel.body.update(html);
                 }
             }
         });
@@ -2597,6 +2609,17 @@ Ext.define("SYNO.SDS.iCloudPhotoSync.LogViewer", {
                                 });
                             }
                         });
+                    }
+                }),
+                new SYNO.ux.Button({
+                    text: SYNO.SDS.iCloudPhotoSync._T("log:btn_export"),
+                    tooltip: SYNO.SDS.iCloudPhotoSync._T("log:btn_export_tooltip"),
+                    handler: function () {
+                        // Navigate to the CGI endpoint directly — the browser handles
+                        // the Content-Disposition: attachment header and prompts to
+                        // save the ZIP without leaving the SPA.
+                        var url = "/webman/3rdparty/iCloudPhotoSync/api.cgi?method=log_export";
+                        window.location.href = url;
                     }
                 }),
                 "->",

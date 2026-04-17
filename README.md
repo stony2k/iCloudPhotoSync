@@ -83,7 +83,23 @@ The first full sync of a large library can take hours. Subsequent syncs are incr
 - Synology DSM **7.2** or newer (uses data-share for target folder permissions, which requires DSM 7.2+)
 - Any architecture — the package is `arch=noarch` (pure Python, no compiled binaries)
 - An Apple ID with 2FA enabled (required by Apple since 2019, not something this app imposes)
+- **iCloud Advanced Data Protection (ADP) must be disabled** for iCloud Photos — see [Known Limitations](#known-limitations)
 - Enough disk space for your photo library
+
+## Known limitations
+
+### iCloud Advanced Data Protection (ADP)
+
+If you have [Advanced Data Protection](https://support.apple.com/en-us/102651) enabled on your Apple account, this app **cannot access your iCloud Photos**. ADP encrypts photos end-to-end so that only your trusted Apple devices hold the decryption keys — Apple's servers (and therefore any web-based API) cannot read them.
+
+This is not a bug in the app; it's a fundamental property of ADP. All tools that access iCloud via the web API (including icloudpd, the open-source project this app builds on) are affected.
+
+**Workarounds:**
+
+1. **Disable ADP** entirely: on your iPhone/iPad, go to *Settings → Apple ID → iCloud → Advanced Data Protection → Turn Off*. This restores web access to all iCloud data.
+2. **Enable temporary web access**: at [icloud.com](https://icloud.com), sign in and approve *"Access iCloud Data on the Web"* when prompted. This grants web API access for a limited time (typically 1 hour). Note: syncs that take longer will be interrupted.
+
+The app detects ADP and shows a clear warning in the Albums tab if access is blocked.
 
 ## Privacy & security
 
@@ -140,5 +156,5 @@ Runtime data lives under `/var/packages/iCloudPhotoSync/var/`:
 - [srp](https://github.com/cocagne/pysrp) — BSD
 
 ## Disclaimer
-This software comes with no warranty; I assume no liability for any damage to hardware or software, or for any loss of data, that may result from using the app. 
-Not affiliated with or endorsed by Apple Inc. "Apple", "iCloud", "Synology", "DSM", and related marks are trademarks of Apple Inc. or Synology Inc. This package talks to Apple's private-but-reverse-engineered iCloud APIs; Apple can change these at any time and break the sync. If that happens, open an issue — or better, a pull request.
+
+Not affiliated with or endorsed by Apple Inc. "Apple", "iCloud", and related marks are trademarks of Apple Inc. This package talks to Apple's private-but-reverse-engineered iCloud APIs; Apple can change these at any time and break the sync. If that happens, open an issue — or better, a pull request.
