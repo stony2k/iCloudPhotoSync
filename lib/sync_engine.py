@@ -585,6 +585,23 @@ def _run_sync_locked(account_id):
             for name, count, latest in album_metas:
                 plan.append((name, "albums", name, count, latest))
 
+        if sync_config.get("shared_albums", {}).get("enabled", False):
+            selected_shared = sync_config.get("shared_albums", {}).get("selected", {})
+            enabled_shared = [name for name, en in selected_shared.items() if en]
+            if enabled_shared:
+                try:
+                    shared = photos_svc.shared_albums
+                    for name in enabled_shared:
+                        alb = shared.get(name)
+                        if alb:
+                            try:
+                                count = alb.photo_count or 0
+                            except Exception:
+                                count = 0
+                            plan.append((name, "shared_albums", name, count, 0))
+                except Exception:
+                    LOGGER.exception("Failed to plan shared albums")
+
         progress.total_photos = sum(p[3] for p in plan)
         progress.save()
 
@@ -621,8 +638,10 @@ def _sync_album(account_id, photos_svc, album_name, target_dir, sync_config, pro
     progress.current_album = album_name
     progress.save()
 
-    albums = photos_svc.albums
-    album = albums.get(album_name)
+    if folder_key == "shared_albums":
+        album = photos_svc.shared_albums.get(album_name)
+    else:
+        album = photos_svc.albums.get(album_name)
     if not album:
         LOGGER.warning("Album not found: %s", album_name)
         return
@@ -714,7 +733,9 @@ def _sync_album(account_id, photos_svc, album_name, target_dir, sync_config, pro
                 date_subfolder = folder_builder(photo.created)
                 filename = _build_filename(photo, sync_config)
 
-                if subfolder:
+                if folder_key == "shared_albums":
+                    dest_dir = os.path.join(target_dir, "Shared", subfolder, date_subfolder)
+                elif subfolder:
                     dest_dir = os.path.join(target_dir, "Albums", subfolder, date_subfolder)
                 else:
                     dest_dir = os.path.join(target_dir, "Photostream", date_subfolder)

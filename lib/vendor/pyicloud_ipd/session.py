@@ -166,8 +166,9 @@ class PyiCloudSession(Session):
         if code == "ACCESS_DENIED":
             reason_lower = (reason or "").lower()
             if any(kw in reason_lower for kw in (
-                "private database", "not accessible", "not available",
-                "end-to-end", "advanced data protection",
+                "private database", "private db", "not accessible",
+                "not available", "end-to-end", "advanced data protection",
+                "disabled for this account",
             )):
                 raise PyiCloudADPProtectionException(reason)
             reason = (

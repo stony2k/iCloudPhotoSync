@@ -202,6 +202,10 @@ def _set_album(params):
         return {"success": False, "error": {"code": 311, "message": "album required"}}
 
     enabled = params.getvalue("enabled", "true").strip().lower() in ("true", "1", "yes")
+    album_type = params.getvalue("album_type", "user").strip()
 
-    config = config_manager.set_album_sync(account_id, album_name, enabled)
+    if album_type == "shared":
+        config = config_manager.set_shared_album_sync(account_id, album_name, enabled)
+    else:
+        config = config_manager.set_album_sync(account_id, album_name, enabled)
     return {"success": True, "data": {"album": album_name, "enabled": enabled}}

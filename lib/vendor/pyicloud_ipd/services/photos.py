@@ -24,24 +24,27 @@ class PhotoAlbum:
 
     def __init__(self, service, name, record_name=None, album_type="user",
                  smart_filter=None, smart_count_key=None,
-                 list_type=None, obj_type=None):
+                 list_type=None, obj_type=None, zone_id=None):
         self.service = service
         self.name = name
         self.record_name = record_name
-        self.album_type = album_type  # "all", "user", "smart"
+        self.album_type = album_type  # "all", "user", "smart", "shared"
         self.smart_filter = smart_filter
         self._photo_count = None
+        self.zone_id = zone_id
 
         if album_type == "all":
             self.list_type = "CPLAssetAndMasterByAssetDateWithoutHiddenOrDeleted"
             self.obj_type = "CPLAssetByAssetDateWithoutHiddenOrDeleted"
         elif album_type == "smart":
             self.list_type = "CPLAssetAndMasterInSmartAlbumByAssetDate"
-            # Count query uses mixed-case, photo query uses UPPERCASE
             self.obj_type = "CPLAssetInSmartAlbumByAssetDate:%s" % (smart_count_key or smart_filter)
         elif album_type == "user":
             self.list_type = "CPLContainerRelationLiveByAssetDate"
             self.obj_type = "CPLContainerRelationNotDeletedByAssetDate:%s" % record_name
+        elif album_type == "shared":
+            self.list_type = "CPLAssetAndMasterByAssetDateWithoutHiddenOrDeleted"
+            self.obj_type = "CPLAssetByAssetDateWithoutHiddenOrDeleted"
         else:
             self.list_type = list_type
             self.obj_type = obj_type
@@ -49,11 +52,16 @@ class PhotoAlbum:
     @property
     def photo_count(self):
         if self._photo_count is None:
-            self._photo_count = self.service._get_album_count(self.obj_type)
+            if self.album_type == "shared":
+                self._photo_count = self.service._get_shared_album_count(self)
+            else:
+                self._photo_count = self.service._get_album_count(self.obj_type)
         return self._photo_count
 
     def photos(self, limit=200, offset=0, direction="ASCENDING"):
         """Fetch photos in this album."""
+        if self.album_type == "shared":
+            return self.service._get_shared_album_photos(self, limit=limit, offset=offset, direction=direction)
         return self.service._get_album_photos(self, limit=limit, offset=offset, direction=direction)
 
     def __repr__(self):
@@ -160,11 +168,17 @@ class PhotosService:
             "remapEnums": "true",
             "getCurrentSyncToken": "true",
         })
+        self._service_root = service_root
         self._service_endpoint = (
             "%s/database/1/com.apple.photos.cloud/production/private"
             % service_root
         )
+        self._shared_endpoint = (
+            "%s/database/1/com.apple.photos.cloud/production/shared"
+            % service_root
+        )
         self._albums = None
+        self._shared_albums = None
 
     def _query(self, payload):
         """Execute a CloudKit records query."""
@@ -399,6 +413,172 @@ class PhotosService:
 
             if not batch:
                 break  # end of album
+
+            result.extend(batch)
+            step = len(batch) if direction == "ASCENDING" else -len(batch)
+            current_offset += step
+            if current_offset < 0:
+                break
+
+        return result[:limit]
+
+    # ── Shared Albums ──────────────────────────────────────────────
+
+    def _shared_query(self, payload):
+        """Execute a CloudKit query against the shared database."""
+        url = "%s/records/query" % self._shared_endpoint
+        response = self.session.post(
+            url,
+            params=self.params,
+            data=json.dumps(payload),
+            headers={"Content-Type": "text/plain"},
+        )
+        return response.json()
+
+    def _shared_zones(self):
+        """List all shared zones (each represents one shared album)."""
+        url = "%s/zones/list" % self._shared_endpoint
+        response = self.session.post(
+            url,
+            params=self.params,
+            data=json.dumps({}),
+            headers={"Content-Type": "text/plain"},
+        )
+        return response.json()
+
+    @property
+    def shared_albums(self):
+        """Returns dict of album name -> PhotoAlbum for shared albums."""
+        if self._shared_albums is not None:
+            return self._shared_albums
+
+        self._shared_albums = {}
+        try:
+            data = self._shared_zones()
+            for zone in data.get("zones", []):
+                zone_id = zone.get("zoneID", {})
+                zone_name = zone_id.get("zoneName", "")
+                if not zone_name or zone_name == "PrimarySync":
+                    continue
+
+                # Fetch album metadata from the shared zone
+                try:
+                    album_data = self._shared_query({
+                        "query": {"recordType": "CPLAlbumByPositionLive"},
+                        "zoneID": zone_id,
+                    })
+                    album_name = None
+                    for record in album_data.get("records", []):
+                        rn = record.get("recordName", "")
+                        if rn in ("----Root-Folder----", "----Project-Root-Folder----"):
+                            continue
+                        fields = record.get("fields", {})
+                        raw_name = fields.get("albumNameEnc", {}).get("value", "")
+                        if raw_name:
+                            try:
+                                album_name = base64.b64decode(raw_name).decode("utf-8")
+                            except Exception:
+                                album_name = raw_name
+                            break
+
+                    if not album_name:
+                        album_name = zone_name
+
+                    self._shared_albums[album_name] = PhotoAlbum(
+                        self, album_name, album_type="shared",
+                        zone_id=zone_id,
+                    )
+                except Exception:
+                    LOGGER.debug("Failed to read shared zone %s", zone_name)
+
+        except Exception:
+            LOGGER.exception("Failed to fetch shared albums")
+
+        return self._shared_albums
+
+    def _get_shared_album_count(self, album):
+        """Get photo count for a shared album by querying its zone."""
+        try:
+            data = self._shared_query({
+                "query": {
+                    "recordType": "CPLAssetAndMasterByAssetDateWithoutHiddenOrDeleted",
+                    "filterBy": [
+                        {"fieldName": "startRank",
+                         "fieldValue": {"type": "INT64", "value": 0},
+                         "comparator": "EQUALS"},
+                        {"fieldName": "direction",
+                         "fieldValue": {"type": "STRING", "value": "ASCENDING"},
+                         "comparator": "EQUALS"},
+                    ],
+                },
+                "resultsLimit": 1,
+                "zoneID": album.zone_id,
+            })
+            records = data.get("records", [])
+            # Count masters only (each photo = 1 master + 1 asset)
+            count = sum(1 for r in records if r.get("recordType") == "CPLMaster")
+            if count > 0:
+                return count
+
+            # Fallback: fetch in batches to count
+            total = 0
+            offset = 0
+            for _ in range(100):
+                photos = self._get_shared_album_photos(album, limit=200, offset=offset)
+                if not photos:
+                    break
+                total += len(photos)
+                offset += len(photos)
+            return total
+        except Exception:
+            LOGGER.exception("Failed to count shared album %s", album.name)
+            return 0
+
+    def _get_shared_album_photos(self, album, limit=200, offset=0, direction="ASCENDING"):
+        """Fetch photos from a shared album zone."""
+        result = []
+        current_offset = offset
+        for _ in range(max(limit, 20)):
+            if len(result) >= limit:
+                break
+
+            data = self._shared_query({
+                "query": {
+                    "filterBy": [
+                        {"fieldName": "startRank",
+                         "fieldValue": {"type": "INT64", "value": current_offset},
+                         "comparator": "EQUALS"},
+                        {"fieldName": "direction",
+                         "fieldValue": {"type": "STRING", "value": direction},
+                         "comparator": "EQUALS"},
+                    ],
+                    "recordType": album.list_type,
+                },
+                "resultsLimit": max((limit - len(result)) * 2, 4),
+                "zoneID": album.zone_id,
+            })
+
+            masters = {}
+            assets = {}
+            for record in data.get("records", []):
+                rt = record.get("recordType", "")
+                rn = record.get("recordName", "")
+                if rt == "CPLMaster":
+                    masters[rn] = record
+                elif rt == "CPLAsset":
+                    ref = record.get("fields", {}).get(
+                        "masterRef", {}
+                    ).get("value", {}).get("recordName")
+                    if ref:
+                        assets[ref] = record
+
+            batch = []
+            for master_id, master in masters.items():
+                asset = assets.get(master_id)
+                batch.append(PhotoAsset(master, asset))
+
+            if not batch:
+                break
 
             result.extend(batch)
             step = len(batch) if direction == "ASCENDING" else -len(batch)

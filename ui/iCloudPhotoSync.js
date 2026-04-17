@@ -1175,7 +1175,7 @@ Ext.define("SYNO.SDS.iCloudPhotoSync.AlbumGrid", {
                     dataIndex: "name", id: "ics-album-name",
                     renderer: function (val, meta, record) {
                         var type = record.get("type");
-                        var icon = type === "smart" ? "\u2606" : "\ud83d\udcc1";
+                        var icon = type === "shared" ? "\ud83d\udc65" : type === "smart" ? "\u2606" : "\ud83d\udcc1";
                         var count = record.get("photo_count");
                         var countStr = (count < 0) ? '<span style="color: #ccc;">\u2026</span>' : count.toLocaleString("de-DE");
                         return '<span style="font-size: 13px; line-height: 22px;">' + icon + ' ' +
@@ -1193,13 +1193,11 @@ Ext.define("SYNO.SDS.iCloudPhotoSync.AlbumGrid", {
                     if (!record) return;
                     // Column 0 = checkbox
                     if (colIndex === 0) {
-                        // Block toggle while a sync is running -- backend would
-                        // reject it anyway, and the banner already explains why.
                         if (self._syncRunning) return;
                         var newVal = !record.get("sync_enabled");
                         record.set("sync_enabled", newVal);
                         record.commit();
-                        self._toggleAlbumSync(record.get("name"), newVal);
+                        self._toggleAlbumSync(record.get("name"), newVal, record.get("type"));
                     } else {
                         self.loadPhotos(record.get("name"));
                     }
@@ -1377,15 +1375,17 @@ Ext.define("SYNO.SDS.iCloudPhotoSync.AlbumGrid", {
         }
     },
 
-    _toggleAlbumSync: function (albumName, enabled) {
+    _toggleAlbumSync: function (albumName, enabled, albumType) {
         if (!this.currentAccountId) return;
         var self = this;
-        this.appWin.apiRequest("config", {
+        var reqParams = {
             action: "set_album",
             account_id: this.currentAccountId,
             album: albumName,
             enabled: enabled ? "true" : "false"
-        }, function (success, data, errMsg) {
+        };
+        if (albumType === "shared") reqParams.album_type = "shared";
+        this.appWin.apiRequest("config", reqParams, function (success, data, errMsg) {
             if (!success) {
                 // Revert the checkbox in the store so the UI reflects reality.
                 var rec = self.albumStore.getAt(self.albumStore.findExact("name", albumName));
@@ -1401,9 +1401,15 @@ Ext.define("SYNO.SDS.iCloudPhotoSync.AlbumGrid", {
 
     _applySyncConfig: function () {
         var selected = (this.syncConfig.albums && this.syncConfig.albums.selected) || {};
+        var sharedSelected = (this.syncConfig.shared_albums && this.syncConfig.shared_albums.selected) || {};
         this.albumStore.each(function (record) {
             var name = record.get("name");
-            record.set("sync_enabled", !!selected[name]);
+            var type = record.get("type");
+            if (type === "shared") {
+                record.set("sync_enabled", !!sharedSelected[name]);
+            } else {
+                record.set("sync_enabled", !!selected[name]);
+            }
             record.commit();
         });
     },
@@ -2257,6 +2263,17 @@ Ext.define("SYNO.SDS.iCloudPhotoSync.SyncSettings", {
                     { xtype: "displayfield", hideLabel: true,
                       value: '<div style="font-size: 11px; color: #888; margin: 2px 0 0 145px;">' + SYNO.SDS.iCloudPhotoSync._T("settings:help_album_selection") + '</div>' }
                 ]},
+                { xtype: "syno_fieldset", title: SYNO.SDS.iCloudPhotoSync._T("settings:section_shared_albums"), items: [
+                    { xtype: "syno_checkbox", fieldLabel: SYNO.SDS.iCloudPhotoSync._T("settings:label_album_sync"), name: "shared_enabled",
+                      boxLabel: SYNO.SDS.iCloudPhotoSync._T("settings:checkbox_selected_shared"), checked: false },
+                    { xtype: "syno_combobox", fieldLabel: SYNO.SDS.iCloudPhotoSync._T("settings:label_folder_structure"), name: "shared_folder",
+                      store: new Ext.data.ArrayStore({ fields: ["val", "label"], data: folderOptions }),
+                      displayField: "label", valueField: "val",
+                      mode: "local", triggerAction: "all", editable: false,
+                      value: "flat", anchor: "100%" },
+                    { xtype: "displayfield", hideLabel: true,
+                      value: '<div style="font-size: 11px; color: #888; margin: 2px 0 0 145px;">' + SYNO.SDS.iCloudPhotoSync._T("settings:help_shared_selection") + '</div>' }
+                ]},
                 { xtype: "syno_fieldset", title: SYNO.SDS.iCloudPhotoSync._T("settings:section_files"), items: [
                     { xtype: "syno_combobox", fieldLabel: SYNO.SDS.iCloudPhotoSync._T("settings:label_filenames"), name: "filenames",
                       store: new Ext.data.ArrayStore({ fields: ["val", "label"], data: [
@@ -2385,6 +2402,10 @@ Ext.define("SYNO.SDS.iCloudPhotoSync.SyncSettings", {
                 if (f("album_folder")) f("album_folder").setValue(data.albums.folder_structure || "flat");
                 if (f("album_dedup")) f("album_dedup").setValue(data.albums.deduplicate_hardlinks !== false);
             }
+            if (data.shared_albums) {
+                if (f("shared_enabled")) f("shared_enabled").setValue(!!data.shared_albums.enabled);
+                if (f("shared_folder")) f("shared_folder").setValue(data.shared_albums.folder_structure || "flat");
+            }
 
             if (f("filenames")) f("filenames").setValue(data.filenames || "original");
             if (f("conflict")) f("conflict").setValue(data.conflict || "skip");
@@ -2409,6 +2430,10 @@ Ext.define("SYNO.SDS.iCloudPhotoSync.SyncSettings", {
                 enabled: f("album_enabled") ? f("album_enabled").getValue() : true,
                 folder_structure: f("album_folder") ? f("album_folder").getValue() : "flat",
                 deduplicate_hardlinks: f("album_dedup") ? f("album_dedup").getValue() : true
+            },
+            shared_albums: {
+                enabled: f("shared_enabled") ? f("shared_enabled").getValue() : false,
+                folder_structure: f("shared_folder") ? f("shared_folder").getValue() : "flat"
             },
             filenames: f("filenames") ? f("filenames").getValue() : "original",
             conflict: f("conflict") ? f("conflict").getValue() : "skip",

@@ -82,8 +82,12 @@ def _cached_albums(params):
         return {"success": True, "data": {"albums": [], "from_cache": True, "cache_age": -1}}
 
     album_list = []
+    album_types = cache.get("types", {})
     for name, count in counts.items():
-        if name in ("All Photos",):
+        cached_type = album_types.get(name)
+        if cached_type:
+            atype = cached_type
+        elif name in ("All Photos",):
             atype = "all"
         elif any(name == s for s in ("Favorites", "Videos", "Screenshots", "Live",
                                       "Panoramas", "Time-lapse", "Slo-mo", "Bursts")):
@@ -92,7 +96,7 @@ def _cached_albums(params):
             atype = "user"
         album_list.append({"name": name, "type": atype, "photo_count": count})
 
-    type_order = {"all": 0, "user": 1, "smart": 2}
+    type_order = {"all": 0, "user": 1, "smart": 2, "shared": 3}
     album_list.sort(key=lambda a: (type_order.get(a["type"], 9), a["name"]))
 
     cache_age = int(time.time()) - cache.get("updated", 0)
@@ -137,8 +141,20 @@ def _list_albums(params):
                 "photo_count": cached_counts.get(name, -1),
             })
 
-        # Sort: "All Photos" first, then user albums, then smart folders
-        type_order = {"all": 0, "user": 1, "smart": 2}
+        # Shared albums
+        try:
+            shared = photos_svc.shared_albums
+            for name, album in shared.items():
+                album_list.append({
+                    "name": name,
+                    "type": "shared",
+                    "photo_count": cached_counts.get(name, -1),
+                })
+        except Exception:
+            pass
+
+        # Sort: "All Photos" first, then user albums, then smart folders, then shared
+        type_order = {"all": 0, "user": 1, "smart": 2, "shared": 3}
         album_list.sort(key=lambda a: (type_order.get(a["type"], 9), a["name"]))
 
         cache_age = int(time.time()) - cache.get("updated", 0)
@@ -165,6 +181,8 @@ def _album_count(params):
         photos_svc = client.api.photos
         album = photos_svc.albums.get(album_name)
         if not album:
+            album = photos_svc.shared_albums.get(album_name)
+        if not album:
             return {"success": False, "error": {"code": 311, "message": "Album not found"}}
 
         count = album.photo_count
@@ -172,6 +190,7 @@ def _album_count(params):
         # Update cache
         cache = _load_cache(account_id)
         cache.setdefault("counts", {})[album_name] = count
+        cache.setdefault("types", {})[album_name] = album.album_type
         _save_cache(account_id, cache)
 
         return {"success": True, "data": {"album": album_name, "photo_count": count}}
@@ -194,8 +213,9 @@ def _list_photos(params):
 
     try:
         photos_svc = client.api.photos
-        albums = photos_svc.albums
-        album = albums.get(album_name)
+        album = photos_svc.albums.get(album_name)
+        if not album:
+            album = photos_svc.shared_albums.get(album_name)
 
         if not album:
             return {"success": False, "error": {"code": 311, "message": "Album not found"}}
